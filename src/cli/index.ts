@@ -3,6 +3,7 @@ import { runHookCommand } from "../adapters/hooks.js";
 import { buildMemoryBundle } from "../core/bundle.js";
 import { configPath, loadConfig, saveConfig } from "../core/config.js";
 import { KeystoneEngine } from "../core/engine.js";
+import { syncGoogleDocs } from "../core/gdocs-sync.js";
 import { importCodexMemories } from "../importers/codex-memories.js";
 import { importDshMdcg } from "../importers/dsh-mdcg.js";
 import {
@@ -71,6 +72,7 @@ Usage:
   keystone seed [repo-dir] [--limit 60]
   keystone reindex
   keystone bundle [--out <dir>] [--bank global] [--max-episodes 30]
+  keystone sync-gdocs [--identity <docId>] [--knowledge <docId>] [--timeline <docId>] [--inbox <docId>]
   keystone import-dsh <path-to-.dsh-memory> [--bank global] [--keep-noise] [--no-commit]
   keystone import-codex <dir1> [dir2...] [--bank global] [--no-commit]
   keystone install [all | claude codex dsh antigravity]
@@ -278,6 +280,26 @@ async function main(): Promise<void> {
         const maxEpisodes = typeof flags["max-episodes"] === "string" ? Number(flags["max-episodes"]) : 30;
         const res = buildMemoryBundle(engine, { bankId, outDir, maxEpisodes });
         console.log(JSON.stringify(res, null, 2));
+        break;
+      }
+
+      case "sync-gdocs": {
+        const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+        if (!saJson) {
+          throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON environment variable.");
+        }
+        const report = await syncGoogleDocs(engine, {
+          serviceAccountJson: saJson,
+          bankId: typeof flags.bank === "string" ? flags.bank : undefined,
+          maxEpisodes: typeof flags["max-episodes"] === "string" ? Number(flags["max-episodes"]) : 30,
+          docIds: {
+            identity: typeof flags.identity === "string" ? flags.identity : process.env.GDOC_ID_IDENTITY,
+            knowledge: typeof flags.knowledge === "string" ? flags.knowledge : process.env.GDOC_ID_KNOWLEDGE,
+            timeline: typeof flags.timeline === "string" ? flags.timeline : process.env.GDOC_ID_TIMELINE,
+            inbox: typeof flags.inbox === "string" ? flags.inbox : process.env.GDOC_ID_INBOX
+          }
+        });
+        console.log(JSON.stringify(report, null, 2));
         break;
       }
 

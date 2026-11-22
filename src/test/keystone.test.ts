@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { buildMemoryBundle } from "../core/bundle.js";
 import { defaultConfig } from "../core/config.js";
 import { KeystoneEngine } from "../core/engine.js";
+import { buildReplaceDocRequests, INBOX_PLACEHOLDER, parseInboxEntries } from "../core/gdocs-sync.js";
 import { redactSecrets } from "../core/redact.js";
 
 function makeTempDir(prefix: string): string {
@@ -217,5 +218,29 @@ describe("Keystone core + Git sync end-to-end", () => {
       engine.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("parses 04_Gemini_Inbox notes cleanly and builds valid Google Docs replace requests", () => {
+    assert.deepEqual(parseInboxEntries(INBOX_PLACEHOLDER + "\n\n"), []);
+
+    const multi = [
+      INBOX_PLACEHOLDER,
+      "",
+      "## 新的缓存策略",
+      "改用 LRU 缓存限制 512MB 上限防止 OOM。",
+      "---",
+      "部署切到 Debian 12 容器镜像，去掉旧的 Alpine 兼容补丁。"
+    ].join("\n");
+
+    const parsed = parseInboxEntries(multi);
+    assert.equal(parsed.length, 2);
+    assert.equal(parsed[0].title, "新的缓存策略");
+    assert.ok(parsed[1].content.includes("Debian 12"));
+
+    const emptyDocReqs = buildReplaceDocRequests(2, "hello");
+    assert.equal(emptyDocReqs.length, 1, "empty doc should only insert without deleting");
+
+    const nonEmptyReqs = buildReplaceDocRequests(42, "updated");
+    assert.equal(nonEmptyReqs.length, 2, "non-empty doc should delete 1..41 then insert at 1");
   });
 });
