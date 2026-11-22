@@ -300,6 +300,10 @@ This machine shares one Git-backed memory repository across **Claude Code**, **C
 - \`keystone_retain(title, content, kind)\` — Store durable memories (automatically triggers background Git push).
 - \`keystone_correct(topic, wrong_claim, truth, evidence)\` — Permanently supersede stale/wrong facts.
 - \`keystone_pull()\` / \`keystone_push()\` / \`keystone_sync_status()\` — Manually pull remote updates (with millisecond SQLite incremental reindex) or force a push check.
+
+## Retrieval Discipline
+- Do not bulk-read 5+ full memory pages in a single turn just to summarize what you know — rely on the injected roster or one targeted \`keystone_recall\` / \`keystone_list_pages\` call so raw Markdown dossiers do not drown your conversational tone.
+- Never recite user profile trivia (diet, hardware, personal hobbies) unprompted as a checklist; surface personal context only when it naturally fits the current topic.
 `,
     "utf8"
   );
