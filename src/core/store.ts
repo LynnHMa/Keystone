@@ -192,6 +192,108 @@ export class GitMemoryStore {
   }
 
   /**
+   * Upserts a single canonical episode file per (bankId, harness, sessionId).
+   * Prevents multi-turn Stop hooks from littering episodes/ with N overlapping snapshots
+   * while remaining 100% conflict-free across devices (each sessionId is globally unique).
+   */
+  upsertSessionEpisode(input: {
+    bankId: string;
+    sessionId: string;
+    title: string;
+    content: string;
+    harness: HarnessName;
+    existingFilePath?: string | null;
+    entities?: string[];
+    tags?: string[];
+    source?: string;
+    confidence?: number;
+  }): MemoryDocument {
+    this.ensureBank(input.bankId);
+    const safeHarness = sanitizeSlug(input.harness);
+    const sessHash = sha256(`${input.bankId}:${safeHarness}:${input.sessionId}`);
+    const id = `ep_sess_${sessHash}`;
+    const now = new Date().toISOString();
+
+    let absPath: string;
+    if (input.existingFilePath) {
+      absPath = join(this.repoDir, ...input.existingFilePath.split("/"));
+      mkdirSync(dirname(absPath), { recursive: true });
+    } else {
+      const ym = now.slice(0, 7);
+      const absDir = join(bankRootDir(this.repoDir, input.bankId), "episodes", ym);
+      mkdirSync(absDir, { recursive: true });
+      absPath = join(absDir, `${id}_${safeHarness}.jsonl`);
+    }
+
+    let createdAt = now;
+    if (existsSync(absPath)) {
+      try {
+        const first = readFileSync(absPath, "utf8").split(/\r?\n/).find(Boolean);
+        if (first) {
+          const prev = JSON.parse(first) as EpisodeRecord;
+          if (prev.createdAt) createdAt = prev.createdAt;
+        }
+      } catch {
+        // ignore corrupted prior line
+      }
+    }
+
+    const title = this.cleanText(input.title.trim() || `Session ${input.sessionId.slice(0, 8)}`);
+    const content = this.cleanText(input.content.trim());
+    const entities =
+      input.entities && input.entities.length > 0
+        ? input.entities
+        : extractEntities(`${title}\n${content}`);
+    const tags = [
+      ...new Set([
+        ...(input.tags ?? []),
+        "session-capture",
+        `harness:${input.harness}`,
+        "kind:experience"
+      ])
+    ];
+
+    const record: EpisodeRecord = {
+      id,
+      bankId: input.bankId,
+      kind: "experience",
+      title,
+      content,
+      entities,
+      tags,
+      harness: input.harness,
+      sessionId: input.sessionId,
+      source: input.source,
+      confidence: input.confidence ?? 0.8,
+      createdAt,
+      updatedAt: now
+    };
+
+    const serialized = JSON.stringify(record) + "\n";
+    writeFileSync(absPath, serialized, "utf8");
+
+    return {
+      id,
+      bankId: input.bankId,
+      kind: "experience",
+      title,
+      content,
+      entities,
+      tags,
+      harness: input.harness,
+      source: input.source,
+      confidence: record.confidence,
+      supersedes: [],
+      supersededBy: null,
+      evidenceIds: [],
+      createdAt,
+      updatedAt: now,
+      filePath: toPosix(relative(this.repoDir, absPath)),
+      contentHash: sha256(serialized)
+    };
+  }
+
+  /**
    * Writes a consolidated Observation or high-priority Correction as human-readable Markdown.
    */
   writeNote(input: {
@@ -379,7 +481,7 @@ export class GitMemoryStore {
             supersededBy: null,
             evidenceIds: [],
             createdAt: rec.createdAt || new Date().toISOString(),
-            updatedAt: rec.createdAt || new Date().toISOString(),
+            updatedAt: rec.updatedAt || rec.createdAt || new Date().toISOString(),
             filePath: relPosixPath,
             contentHash: hash
           });

@@ -165,4 +165,57 @@ describe("Keystone core + Git sync end-to-end", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("deduplicates repeated Stop captures for the same sessionId in-place via watermark", async () => {
+    const dir = makeTempDir("keystone-watermark-");
+    const cfg = defaultConfig();
+    cfg.repoDir = join(dir, "repo");
+    cfg.git.autoPush = false;
+
+    const engine = new KeystoneEngine(cfg);
+    try {
+      engine.init();
+
+      const turn1 = "User: 如何防止主线程阻塞？\nAssistant: 使用 SaveScope 跨帧防抖合并脏标记更新。";
+      const r1 = await engine.retainSessionTranscript({
+        cwd: dir,
+        harness: "antigravity-cli",
+        sessionId: "sess-abc-123456",
+        transcriptSummary: turn1,
+        syncMode: "none"
+      });
+      assert.equal(r1, 1, "first capture should write 1 session episode");
+
+      // Exact duplicate Stop fire -> must short-circuit with 0 writes
+      const r2 = await engine.retainSessionTranscript({
+        cwd: dir,
+        harness: "antigravity-cli",
+        sessionId: "sess-abc-123456",
+        transcriptSummary: turn1,
+        syncMode: "none"
+      });
+      assert.equal(r2, 0, "identical content hash must skip duplicate write");
+
+      // New turn appended to same session -> must update single file in-place, not create a 2nd file
+      const turn2 = turn1 + "\nUser: 再加一个 GUID 拓扑映射。\nAssistant: 已通过 ContextRegistry 实现 O(1) 查找。";
+      const r3 = await engine.retainSessionTranscript({
+        cwd: dir,
+        harness: "antigravity-cli",
+        sessionId: "sess-abc-123456",
+        transcriptSummary: turn2,
+        syncMode: "none"
+      });
+      assert.equal(r3, 1, "updated session should upsert in-place");
+
+      const files = engine.store.listAllMemoryFiles();
+      assert.equal(files.length, 1, "same sessionId must remain exactly 1 file on disk");
+      assert.equal(engine.index.getTotalCount(), 1, "SQLite index must contain exactly 1 doc");
+
+      const recalled = await engine.recall({ bankId: "global", query: "ContextRegistry GUID" });
+      assert.equal(recalled.results.length, 1, "updated turn content must be immediately searchable");
+    } finally {
+      engine.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

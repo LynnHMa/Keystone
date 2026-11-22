@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -448,7 +449,10 @@ export class KeystoneEngine {
   }
 
   /**
-   * Retains a finished coding-agent session transcript (with optional LLM distillation).
+   * Retains a coding-agent session transcript with per-session watermark deduplication:
+   * - Identical content hash -> immediate no-op (0 writes, 0 commits).
+   * - Same sessionId with new turns -> updates its single canonical episode file in-place.
+   * - Optional LLM distillation only processes the incremental delta past the last cursor.
    */
   async retainSessionTranscript(input: {
     cwd?: string;
@@ -460,36 +464,57 @@ export class KeystoneEngine {
     const clean = input.transcriptSummary.trim();
     if (clean.length < 40) return 0;
 
-    // Optional LLM distillation into multiple clean memories
-    const distilled = await this.llm.distillSession(clean);
-    if (distilled && distilled.length > 0) {
-      let count = 0;
-      for (const item of distilled.slice(0, 6)) {
-        await this.retain({
-          cwd: input.cwd,
-          kind: item.kind,
-          title: item.title,
-          content: item.content,
-          entities: item.entities,
-          tags: [...(item.tags ?? []), "distilled"],
-          harness: input.harness,
-          sessionId: input.sessionId,
-          syncMode: "none"
-        });
-        count++;
-      }
-      const bank = this.resolveBankForCwd(input.cwd);
-      const mode = input.syncMode ?? "background";
-      if (mode !== "none") {
-        this.maybeSyncAfterWrite(
-          `mem(${bank.bankId}): [${input.harness}] distill ${count} memories from session ${input.sessionId.slice(0, 8)}`,
-          mode === "background"
-        );
-      }
-      return count;
+    const bank = this.resolveBankForCwd(input.cwd);
+    const stateScope = `${bank.bankId}:${input.harness}:${input.sessionId}`;
+    const hashKey = `session_hash:${stateScope}`;
+    const fileKey = `session_file:${stateScope}`;
+    const cursorKey = `session_cursor:${stateScope}`;
+
+    const contentHash = createHash("sha256").update(clean, "utf8").digest("hex").slice(0, 16);
+    if (this.index.getState(hashKey) === contentHash) {
+      return 0;
     }
 
-    // Deterministic fallback: persist concise session episode directly
+    // Optional LLM distillation: only distill incremental delta when possible
+    if (this.llm.isConfigured()) {
+      const prevCursor = Number(this.index.getState(cursorKey) ?? "0");
+      const delta = prevCursor > 0 && clean.length > prevCursor ? clean.slice(prevCursor).trim() : clean;
+      const distilled = delta.length >= 40 ? await this.llm.distillSession(delta) : null;
+      if (distilled && distilled.length > 0) {
+        let count = 0;
+        for (const item of distilled.slice(0, 6)) {
+          await this.retain({
+            cwd: input.cwd,
+            kind: item.kind,
+            title: item.title,
+            content: item.content,
+            entities: item.entities,
+            tags: [...(item.tags ?? []), "distilled"],
+            harness: input.harness,
+            sessionId: input.sessionId,
+            syncMode: "none"
+          });
+          count++;
+        }
+        this.index.setState(hashKey, contentHash);
+        this.index.setState(cursorKey, String(clean.length));
+        const mode = input.syncMode ?? "background";
+        if (mode !== "none") {
+          this.maybeSyncAfterWrite(
+            `mem(${bank.bankId}): [${input.harness}] distill ${count} memories from session ${input.sessionId.slice(0, 8)}`,
+            mode === "background"
+          );
+        }
+        return count;
+      }
+    }
+
+    // Deterministic mode: update one canonical file per sessionId in-place (zero duplicate snapshots)
+    this.store.ensureBank(bank.bankId, {
+      repoName: bank.repoName,
+      remoteUrl: bank.remoteUrl ?? undefined
+    });
+
     const firstLine =
       clean
         .split(/\r?\n/)
@@ -497,16 +522,29 @@ export class KeystoneEngine {
         ?.replace(/^(?:User|Assistant):\s*/i, "")
         .slice(0, 72) || `Session ${input.sessionId.slice(0, 8)}`;
 
-    await this.retain({
-      cwd: input.cwd,
-      kind: "experience",
+    const existingFilePath = this.index.getState(fileKey);
+    const doc = this.store.upsertSessionEpisode({
+      bankId: bank.bankId,
+      sessionId: input.sessionId,
       title: `[${input.harness}] ${firstLine}`,
       content: clean.slice(0, 8000),
       harness: input.harness,
-      sessionId: input.sessionId,
-      tags: ["session-capture"],
-      syncMode: input.syncMode ?? "background"
+      existingFilePath,
+      tags: ["session-capture"]
     });
+
+    const embedding = await this.llm.embed(`${doc.title}\n${doc.content}`);
+    this.index.upsertDocument(doc, embedding);
+    this.index.setState(hashKey, contentHash);
+    this.index.setState(fileKey, doc.filePath);
+
+    const mode = input.syncMode ?? "background";
+    if (mode !== "none") {
+      this.maybeSyncAfterWrite(
+        `mem(${bank.bankId}): [${input.harness}] sync session ${input.sessionId.slice(0, 8)}`,
+        mode === "background"
+      );
+    }
     return 1;
   }
 

@@ -48,6 +48,7 @@ export interface EpisodeRecord {
   source?: string;
   confidence: number;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface RecallResult {
