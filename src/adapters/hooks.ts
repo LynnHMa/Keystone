@@ -83,10 +83,12 @@ export async function runHookCommand(
         return;
       }
 
+      const sessionId = String(ev.conversationId ?? ev.session_id ?? "");
       const context = await engine.buildContextInjection({
         cwd,
         prompt: promptText,
-        harness
+        harness,
+        sessionId: sessionId || undefined
       });
 
       if (!context) {

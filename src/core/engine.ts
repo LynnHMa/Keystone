@@ -387,17 +387,27 @@ export class KeystoneEngine {
   }
 
   /**
-   * Builds a compact prompt injection block for coding-agent hooks (Claude / Codex / dsh / Antigravity).
+   * Builds a compact prompt injection block once per session for coding-agent hooks
+   * (Claude / Codex / dsh / Antigravity), preventing per-turn context flooding.
    */
   async buildContextInjection(opts: {
     cwd?: string;
     prompt: string;
     harness: HarnessName;
+    sessionId?: string;
   }): Promise<string | null> {
     const harnessCfg = this.config.harnesses[opts.harness];
     if (harnessCfg?.disabled) return null;
     const mode = harnessCfg?.autoInject ?? this.config.autoInject;
     if (mode === "none") return null;
+
+    if (opts.sessionId) {
+      const stateKey = `injected_session:${opts.harness}:${opts.sessionId}`;
+      if (this.index.getState(stateKey) === "true") {
+        return null;
+      }
+      this.index.setState(stateKey, "true");
+    }
 
     const bank = this.resolveBankForCwd(opts.cwd);
     const bankIds =
@@ -414,21 +424,28 @@ export class KeystoneEngine {
     }
     parts.push(headerBits.join(" | "));
 
+    let hasContent = status.remoteAhead;
+
     if (mode === "pages" || mode === "both") {
-      const pages = this.index.listPages(bankIds).slice(0, 6);
+      const pages = this.index.listPages(bankIds).slice(0, 8);
       if (pages.length > 0) {
-        parts.push(
-          "### Mental Model Pages:\n" +
-            pages.map((p) => `- \`${p.id}\` (${p.kind}): ${p.title}`).join("\n")
-        );
+        let roster = "### Mental Model Pages:\n";
+        for (const p of pages) {
+          const line = `- \`${p.id}\` (${p.kind}): ${p.title}\n`;
+          if (roster.length + line.length > 1200) break;
+          roster += line;
+        }
+        parts.push(roster.trimEnd());
+        hasContent = true;
       }
     }
 
-    if (mode === "recall" || mode === "both") {
+    const trimmedPrompt = opts.prompt.trim();
+    if ((mode === "recall" || mode === "both") && trimmedPrompt.length > 10) {
       const { results } = await this.recall({
-        query: opts.prompt,
+        query: trimmedPrompt,
         cwd: opts.cwd,
-        limit: 5
+        limit: 4
       });
       if (results.length > 0) {
         parts.push(
@@ -436,14 +453,16 @@ export class KeystoneEngine {
             results
               .map(
                 (r) =>
-                  `- [${r.kind.toUpperCase()}] **${r.title}** (\`${r.id}\`, from \`${r.harness}\`): ${r.snippet}`
+                  `- [${r.kind.toUpperCase()}] **${r.title}** (\`${r.id}\`, from \`${r.harness}\`): ${r.snippet.slice(0, 220)}`
               )
               .join("\n")
         );
+        hasContent = true;
       }
     }
 
-    if (parts.length <= 1) return null;
+    if (!hasContent) return null;
+    parts.push("Need deeper history? Call `keystone_recall`, `keystone_search_pages`, or `keystone_read_page` on demand.");
     const joined = parts.join("\n\n");
     return joined.slice(0, this.config.maxInjectChars);
   }

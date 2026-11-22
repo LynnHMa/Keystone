@@ -243,4 +243,54 @@ describe("Keystone core + Git sync end-to-end", () => {
     const nonEmptyReqs = buildReplaceDocRequests(42, "updated");
     assert.equal(nonEmptyReqs.length, 2, "non-empty doc should delete 1..41 then insert at 1");
   });
+
+  it("injects Keystone context once per session and skips recall on tiny greetings", async () => {
+    const dir = makeTempDir("keystone-inject-");
+    const cfg = defaultConfig();
+    cfg.repoDir = join(dir, "repo");
+    cfg.git.autoPush = false;
+
+    const engine = new KeystoneEngine(cfg);
+    try {
+      engine.init();
+      await engine.upsertPage({
+        bankId: "global",
+        slug: "arch_core",
+        title: "Arch Core Identity",
+        content: "SSOT and cross-frame debounce principles.",
+        harness: "antigravity-cli",
+        syncMode: "none"
+      });
+      await engine.retain({
+        bankId: "global",
+        kind: "experience",
+        title: "Noise Episode",
+        content: "卧槽 这段日志不该被短句拉出来",
+        harness: "dsh",
+        syncMode: "none"
+      });
+
+      const first = await engine.buildContextInjection({
+        cwd: dir,
+        prompt: "卧槽",
+        harness: "antigravity-cli",
+        sessionId: "sess-once-1"
+      });
+      assert.ok(first, "first turn of session should inject compact page roster");
+      assert.ok(first.includes("Arch Core Identity"));
+      assert.ok(first.includes("keystone_recall"));
+      assert.equal(first.includes("Relevant Recalled Memories"), false, "short greeting <=10 chars must skip recall");
+
+      const second = await engine.buildContextInjection({
+        cwd: dir,
+        prompt: "那我们现在继续聊具体的 SSOT 架构",
+        harness: "antigravity-cli",
+        sessionId: "sess-once-1"
+      });
+      assert.equal(second, null, "second turn of same sessionId must return null");
+    } finally {
+      engine.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
