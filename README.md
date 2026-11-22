@@ -62,6 +62,7 @@ node dist/cli/index.js correct "API Timeout" --wrong "5s" --truth "30s" --eviden
 node dist/cli/index.js pull              # Manual pull + incremental SQLite reindex
 node dist/cli/index.js push              # Manual push
 node dist/cli/index.js bundle            # Export 3 Markdown files for Gemini Gem / Drive
+node dist/cli/index.js sync-gdocs        # Bidirectional sync with Google Docs + Gemini Inbox
 ```
 
 ## Multi-Harness Integration
