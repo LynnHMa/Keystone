@@ -13,7 +13,7 @@ export interface CodexImportReport {
 }
 
 const SKIP_DIRS = new Set([".git", ".codex-baseline", "node_modules"]);
-const SKIP_FILES = new Set(["raw_memories.md", "instructions.md"]);
+const SKIP_FILES = new Set(["raw_memories.md", "instructions.md", "MEMORY.md", "memory_summary.md"]);
 
 function extractTitle(body: string, metaName: unknown, fallback: string): string {
   const h1 = body.match(/^#\s+(.+)$/m)?.[1]?.trim();

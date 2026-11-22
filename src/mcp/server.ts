@@ -40,7 +40,21 @@ export function createKeystoneMcpServer(engine: KeystoneEngine, harness: Harness
         kinds: args.kinds as MemoryKind[] | undefined,
         limit: args.limit ?? 8
       });
-      return okJson({ bank: bank.bankId, count: results.length, results });
+      return okJson({
+        bank: bank.bankId,
+        count: results.length,
+        results: results.map((r) => ({
+          id: r.id,
+          bankId: r.bankId,
+          kind: r.kind,
+          title: r.title,
+          snippet: r.snippet,
+          score: r.score,
+          harness: r.harness,
+          updatedAt: r.updatedAt,
+          filePath: r.filePath
+        }))
+      });
     }
   );
 
@@ -61,7 +75,21 @@ export function createKeystoneMcpServer(engine: KeystoneEngine, harness: Harness
         kinds: ["page", "initiative", "correction"],
         limit: args.limit ?? 6
       });
-      return okJson({ bank: bank.bankId, count: results.length, results });
+      return okJson({
+        bank: bank.bankId,
+        count: results.length,
+        results: results.map((r) => ({
+          id: r.id,
+          bankId: r.bankId,
+          kind: r.kind,
+          title: r.title,
+          snippet: r.snippet,
+          score: r.score,
+          harness: r.harness,
+          updatedAt: r.updatedAt,
+          filePath: r.filePath
+        }))
+      });
     }
   );
 
@@ -81,9 +109,7 @@ export function createKeystoneMcpServer(engine: KeystoneEngine, harness: Harness
           bankId: p.bankId,
           kind: p.kind,
           title: p.title,
-          filePath: p.filePath,
-          updatedAt: p.updatedAt,
-          tags: p.tags
+          updatedAt: p.updatedAt
         }))
       });
     }
